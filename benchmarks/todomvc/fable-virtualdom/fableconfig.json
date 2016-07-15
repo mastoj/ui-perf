@@ -1,7 +1,7 @@
 {
     "module": "amd",
     "sourceMaps": true,
-    "projFile": "./virtualdom.fsx",
+    "projFile": "./src/virtualdom.fsx",
     "outDir": "out",
     "scripts": {
         "prebuild": "npm install"

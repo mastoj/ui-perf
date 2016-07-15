@@ -1,5 +1,5 @@
-#r "node_modules/fable-core/Fable.Core.dll"
-#load "node_modules/fable-import-virtualdom/Fable.Helpers.Virtualdom.fs"
+#r "../node_modules/fable-core/Fable.Core.dll"
+#load "Fable.Helpers.Virtualdom.fs"
 
 open Fable.Core
 open Fable.Import
@@ -228,7 +228,7 @@ module Storage =
         Browser.localStorage.setItem(STORAGE_KEY, JS.JSON.stringify todos)
 
 open Storage
-let initList = fetch<Item>() |> List.ofArray
+let initList = [] //fetch<Item>() |> List.ofArray
 let initModel = {Filter = All; Items = initList; Input = ""}
 
 let todoApp =
