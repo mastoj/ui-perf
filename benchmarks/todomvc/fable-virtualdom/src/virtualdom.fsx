@@ -1,13 +1,16 @@
 #r "../node_modules/fable-core/Fable.Core.dll"
-#load "Fable.Helpers.Virtualdom.fs"
+#load "../node_modules/fable-arch/Fable.Arch.Html.fs"
+#load "../node_modules/fable-arch/Fable.Arch.App.fs"
+#load "../node_modules/fable-arch/Fable.Arch.Virtualdom.fs"
 
 open Fable.Core
+open Fable.Core.JsInterop
 open Fable.Import
 open Fable.Import.Browser
 
-open Fable.Helpers.Virtualdom
-open Fable.Helpers.Virtualdom.App
-open Fable.Helpers.Virtualdom.Html
+open Fable.Arch
+open Fable.Arch.App
+open Fable.Arch.Html
 
 // Todo model
 type Filter =
@@ -23,17 +26,16 @@ type Item =
         IsEditing: bool
     }
 
-type TodoModel =
+type Model =
     {
         Items: Item list
         Input: string
         Filter: Filter
     }
 
-// Todo update
 type TodoAction =
-    | Nop
-    | AddItem
+    | NoOp
+    | AddItem of string
     | ChangeInput of string
     | MarkAsDone of Item
     | ToggleItem of Item
@@ -45,67 +47,62 @@ type TodoAction =
     | EditItem of Item
     | SaveItem of Item*string
 
-let todoUpdate model msg =
-    let checkAllWith v =
-        let items' =
-            model.Items
-            |> List.map (fun i -> { i with Done = v })
+// Todo update
+let update model msg =
+    let updateItems model f =
+        let items' = f model.Items
         {model with Items = items'}
 
+    let checkAllWith v =
+        List.map (fun i -> { i with Done = v })
+        |> updateItems model
+
     let updateItem i model =
-        let items' =
-            model.Items |> List.map (fun i' ->
+        List.map (fun i' ->
                 if i'.Id <> i.Id then i' else i)
-        {model with Items = items'}
+        |> updateItems model
 
     let model' =
         match msg with
-        | AddItem ->
+        | NoOp -> model
+        | AddItem str ->
             let maxId =
                 if model.Items |> List.isEmpty then 1
                 else
                     model.Items
                     |> List.map (fun x -> x.Id)
                     |> List.max
-            let item' = {
-                Id = maxId + 1
-                Name = model.Input
-                Done = false
-                IsEditing = false}
-            {model with Items = item'::model.Items; Input = ""}
+            (fun items ->
+                items @ [{  Id = maxId + 1
+                            Name = str
+                            Done = false
+                            IsEditing = false}])
+            |> updateItems {model with Input = ""}
         | ChangeInput v -> {model with Input = v}
         | MarkAsDone i ->
-            let items' =
-                model.Items |> List.map (fun i' ->
-                    if i' <> i then i'
-                    else {i with Done = true})
-            {model with Items = items'}
+            updateItem {i with Done = true} model
         | CheckAll -> checkAllWith true
         | UnCheckAll -> checkAllWith false
         | Destroy i ->
-            let items' =
-                model.Items |> List.filter (fun i' -> i'.Id <> i.Id)
-            {model with Items = items'}
+            List.filter (fun i' -> i'.Id <> i.Id)
+            |> updateItems model
         | ToggleItem i ->
             updateItem {i with Done = not i.Done} model
         | SetActiveFilter f ->
             { model with Filter = f }
         | ClearCompleted ->
-            let items' =
-                model.Items |> List.filter (fun i -> not i.Done)
-            { model with Items = items'}
+            List.filter (fun i -> not i.Done)
+            |> updateItems model
         | EditItem i ->
             updateItem { i with IsEditing = true} model
         | SaveItem (i,str) ->
             updateItem { i with Name = str; IsEditing = false} model
-        | Nop -> model
 
-    let jsCalls =
+    let jsCall =
         match msg with
-        | EditItem i -> [fun () ->
-            document.getElementById("item-" + (i.Id.ToString())).focus()]
+        | EditItem i -> toActionList <| fun x -> document.getElementById("item-" + (i.Id.ToString())).focus()
         | _ -> []
-    model',jsCalls
+    model', jsCall
 
 // Todo view
 let filterToTextAndUrl = function
@@ -149,19 +146,18 @@ let todoFooter model =
                     onMouseClick (fun _ -> ClearCompleted)]
                 [ text "Clear completed" ] ]
 
+let inline onInput x = onEvent "oninput" (fun e -> x (unbox e?target?value)) 
+let onEnter succ nop = onKeydown (fun x -> if (unbox x?keyCode) = 13 then let value = (x?target?value).ToString() in x?target?value <- ""; succ value else nop)
 let todoHeader model =
     header
         [attribute "class" "header"]
         [   h1 [] [text "todos"]
             input [ attribute "class" "new-todo"
                     attribute "id" "new-todo"
-                    property "value" model
+//                    property "value" model
                     property "placeholder" "What needs to be done?"
-                    onEvent "oninput" (fun x -> console.debug(sprintf "%A" x); ChangeInput (x?target?value :?> string))
-                    onKeydown (fun x ->
-                        if x.keyCode = 13
-                        then AddItem
-                        else Nop )]]
+//                    onInput (fun x -> ChangeInput x)
+                    onEnter AddItem NoOp ]]
 let listItem item =
     let itemChecked = if item.Done then "true" else ""
     let editClass = if item.IsEditing then "editing" else ""
@@ -178,7 +174,7 @@ let listItem item =
          input [ attribute "class" "edit"
                  attribute "value" item.Name
                  property "id" ("item-"+item.Id.ToString())
-                 onBlur (fun e -> SaveItem (item, (e?target?value :?> string))) ] ]
+                 onBlur (fun e -> SaveItem (item, (unbox e?target?value))) ] ]
 
 let itemList items activeFilter =
     let filterItems i =
@@ -207,9 +203,9 @@ let todoMain model =
                       [ text "Mark all as complete" ]
                 (itemList items model.Filter) ]
 
-let todoView model =
+let view model =
     section
-        [property "class" "todoapp"]
+        [attribute "class" "todoapp"]
         ((todoHeader model.Input)::(if model.Items |> List.isEmpty
                 then []
                 else [  (todoMain model)
@@ -228,16 +224,14 @@ module Storage =
         Browser.localStorage.setItem(STORAGE_KEY, JS.JSON.stringify todos)
 
 open Storage
-let initList = [] //fetch<Item>() |> List.ofArray
+let initList = fetch<Item>() |> List.ofArray
 let initModel = {Filter = All; Items = initList; Input = ""}
 
-let todoApp =
-    createApp {Model = initModel; View = todoView; Update = todoUpdate}
-//    |> (withSubscriber "storagesub" (function
-//            | ModelChanged (newModel,old) ->
-//                save (newModel.Items |> Array.ofList)
-//            | _ -> ()))
-//    |> (withSubscriber "modellogger" (printfn "%A"))
-    |> withStartNode "#todo"
+createApp initModel view update Virtualdom.renderer
+//|> (withSubscriber (fun m -> save (m.CurrentState.Items |> Array.ofList)))
+//|> (withSubscriber (printfn "%A"))
+//|> withPlugin (Fable.Arch.DevTools.createDevTools<TodoAction, Model> "something" initModel)
+|> withStartNodeSelector "#todo"
+|> start
 
-todoApp |> start renderer
+
